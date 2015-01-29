@@ -2,10 +2,16 @@
 <!doctype html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width">
+  <meta name="viewport" content="width=device-width; height=device-height; maximum-scale=1.0; initial-scale=1.0; user-scalable=no"/>
 </head>
 <body>
 <style>
+  html, body{
+		-ms-touch-action: none;
+    touch-action: none;
+    width: 100%;
+    height: 100%;
+  }
   #test {
     background: green;
     overflow: hidden;
@@ -21,13 +27,24 @@
 </style>
 
 <div id="test">
+<div id="eventName"></div>
 </div>
+<div id="log" style="margin-top:20em;overflow:scroll;height:50%">log...<br/></div>
 
 hmm...
 
 <!-- Pointer events library. -->
 <script src="points.js"></script>
 <script>
+function log(str){
+	var msg = str;
+	requestAnimationFrame(function(){
+		var log = document.getElementById("log");
+		log.innerHTML += msg + "<br />";
+		log.scrollTop = log.scrollHeight;
+	})
+}
+
 window.onload = function(){
   var test = document.querySelector('#test');
   test.style.top = "50px";
@@ -36,6 +53,7 @@ window.onload = function(){
   test.style.width = "200px";
   var g = new GestureListener(test);
   test.addEventListener("gesture",function(e){
+		document.getElementById("eventName").innerHTML = e.name;
 		switch(e.name){
 			case "pan":
 			 var y = e.moveY;
@@ -98,7 +116,7 @@ var GestureListener = function(targetElement){
 		if ( document.createEvent ) {
 			createUIEvent = function ( type, bubbles ) {
 				var pointerEvent = document.createEvent( 'UIEvents' );
-				pointerEvent.initUIEvent( type, bubbles, true, window );
+				pointerEvent.initUIEvent( type, bubbles, true, window,0 );
 
 				return pointerEvent;
 			};
@@ -126,19 +144,7 @@ var GestureListener = function(targetElement){
 		return pointerEvent;
 	};
 
-  targetElement.addEventListener('pointerdown', function(e) {
-		e.preventDefault();
-		if(e.pointerType == "mouse" && e.button == -1) return;
-		recentPointers[e.pointerId] = e;//current state
-		curPointers[e.pointerId] = e;//current state
-  });
 
-  targetElement.addEventListener('pointerenter', function(e) {
-		e.preventDefault();
-		if(e.pointerType == "mouse" && e.button == -1) return;
-		recentPointers[e.pointerId] = e;//current state
-		curPointers[e.pointerId] = e;//current state
-  });
     
   copyPointers = function(pointerList){
 		var p1 = [];
@@ -159,18 +165,18 @@ var GestureListener = function(targetElement){
 		* pan - one pointer, slow movement
 		* swipe - one pointer, fast movement
 		* pinch - two pointers, move towards or away from each other
-		* pan2 - two pointers, move same direction
 		*/
 		var ps = copyPointers(curPointers);
-		if(ps.length < 1 || !ps[0].totalTime) return;
+		//if(ps.length < 1 || !ps[0].totalTime) return;
 		var params = {
 			name: null,
 			pointers: ps
 		};
 		var pt = ps[0];
 		var totalMove = Math.abs(pt.distX) + Math.abs(pt.distY);
+		log("ms:"+ pt.totalTime + " move:" + totalMove + " " + ps.length + " " + lastGesture + " " + pt.type);
 		if(ps.length == 1){
-			if(totalMove < 1 && !lastGesture){
+			if(totalMove < 10 && !lastGesture){
 				if(pt.ended){
 					if(pt.totalTime < 200){
 						params.name = "tap";
@@ -182,17 +188,15 @@ var GestureListener = function(targetElement){
 				}//else do nothing - wait to see what happens
 			}else{
 				//pan, swipe
-				var totalSpeed = Math.abs(pt.speedX) + Math.abs(pt.speedY);
+				//var totalSpeed = Math.abs(pt.speedX) + Math.abs(pt.speedY);
 				params.moveX = pt.distX;
 				params.moveY = pt.distY;
-				if(totalSpeed < 3){
+				var totalSpeed = totalMove / pt.totalTime;
+				if(totalMove < 30 || totalSpeed < 2 ){
 					params.name = "pan";
 				}else{
 					//if(pt.ended){
 						params.name = "swipe";
-						//reset - stop gesture after swipe
-						recentPointers = {};
-						curPointers = {};
 					//}
 				}
 			}
@@ -212,9 +216,13 @@ var GestureListener = function(targetElement){
 		}
 		//only fire if we have data
 		if(params.name){
-			targetElement.innerHTML = params.name;
-			var gEvent = createEvent("gesture",params, true);
+			if(params.name == "swipe"){
+					//reset - stop gesture after swipe
+					curPointers = {};
+					lastGesture = null;
+			}
 			lastGesture = params.name;
+			var gEvent = createEvent("gesture",params, true);
 			recentPointers = {};
 			for(var lp in curPointers){
 				recentPointers[lp] = curPointers[lp];
@@ -235,7 +243,8 @@ var GestureListener = function(targetElement){
   var updatePointerEvent = function(e){
 		if(recentPointers[e.pointerId]){
 			var first = recentPointers[e.pointerId];
-			var dur = e.timeStamp - first.timeStamp;
+			//var dur = e.timeStamp - first.timeStamp;
+			var dur = e.eventTime - first.eventTime;
 			var distX = e.pageX - first.pageX;
 			var distY = e.pageY - first.pageY;
 			var params = {
@@ -256,9 +265,25 @@ var GestureListener = function(targetElement){
 			return false;
 		}
   }
+    targetElement.addEventListener('pointerdown', function(e) {
+		e.preventDefault();
+		if(e.pointerType == "mouse" && e.button == -1) return;
+		e.eventTime = Date.now();
+		recentPointers[e.pointerId] = e;//current state
+		curPointers[e.pointerId] = e;//current state
+  });
+
+  targetElement.addEventListener('pointerenter', function(e) {
+		e.preventDefault();
+		if(e.pointerType == "mouse" && e.button == -1) return;
+		e.eventTime = Date.now();
+		recentPointers[e.pointerId] = e;//current state
+		curPointers[e.pointerId] = e;//current state
+  });
   
   targetElement.addEventListener('pointermove', function(e) {
 		e.preventDefault();
+		e.eventTime = Date.now();
   	curPointers[e.pointerId] = e;
 		if(updatePointerEvent(e)){
 			//setTimeout(function(){
@@ -280,6 +305,7 @@ var GestureListener = function(targetElement){
   });
   
   var handlePointerEndEvent = function(e){
+		e.eventTime = Date.now();
 		if(recentPointers[e.pointerId]){
 			curPointers[e.pointerId] = e;
 			Object.defineProperty( e, "ended", {
@@ -306,7 +332,6 @@ var GestureListener = function(targetElement){
 		if(copyPointers(curPointers).length == 0){
 			//reset variables
 			lastGesture = null;
-			console.log("reset");
 		}
   }
 }
