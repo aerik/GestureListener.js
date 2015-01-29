@@ -1,0 +1,267 @@
+
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width">
+</head>
+<body>
+<style>
+  #test {
+    background: green;
+    width: 480px;
+    height: 480px;
+    margin: 0 auto;
+    overflow: hidden;
+    color: white;
+    -ms-touch-action: none;
+    touch-action: none;
+  }
+
+  body {
+    overflow: hidden;
+  }
+</style>
+
+<div id="test">
+</div>
+
+hmm...
+
+<!-- Pointer events library. -->
+<script src="pointer.js"></script>
+<script>
+window.onload = function(){
+  var test = document.querySelector('#test');
+  var g = new GestureListener(test);
+  test.addEventListener("gesture",function(e){
+		//console.log(e);
+  });
+}
+
+var GestureListener = function(targetElement){  
+  var listener = new PointListener(window);//need to listen to whole window for pointerEnter events to work
+	var pointers = {};
+	var startPointers = {};//set on first touch of pointer, reset when pointer ends or moves out
+	var lastPointers = {};//always holds most recent pointers
+	var lastParams = {}; //parameters from last gesture
+	var busy = false;
+	var gestureTimeout = 30;//how long to wait before firing a gesture
+	
+	var createUIEvent = false;
+	// Can we create events using the MouseEvent constructor? If so, gravy
+	try {
+		i = new UIEvent( 'test' );
+
+		createUIEvent = function ( type, bubbles ) {
+			return new UIEvent( type, { view: window, bubbles: bubbles });
+		};
+
+	// otherwise we need to do things oldschool
+	} catch ( err ) {
+		if ( document.createEvent ) {
+			createUIEvent = function ( type, bubbles ) {
+				var pointerEvent = document.createEvent( 'UIEvents' );
+				pointerEvent.initUIEvent( type, bubbles, true, window );
+
+				return pointerEvent;
+			};
+		}
+	}
+
+	if ( !createUIEvent ) {
+		throw new Error( 'Cannot create events. You may be using an unsupported browser.' );
+	}
+
+	var createEvent = function ( type, params, noBubble ) {
+		var pointerEvent, i;
+
+		pointerEvent = createUIEvent( type, !noBubble );
+		//delete original pageX and Y so they can be set by Params
+		delete pointerEvent.pageX;
+		delete pointerEvent.pageY;
+
+		for(var p in params) {
+			Object.defineProperty( pointerEvent, p, {
+				value: params[ p ],
+				writable: false
+			});
+		}
+		return pointerEvent;
+	};
+
+  targetElement.addEventListener('pointerdown', function(e) {
+		e.preventDefault();
+		if(e.pointerType == "mouse" && e.button == -1) return;
+		startPointers[e.pointerId] = e;//current state
+		lastPointers[e.pointerId] = e;//current state
+  });
+
+  targetElement.addEventListener('pointerenter', function(e) {
+		e.preventDefault();
+		if(e.pointerType == "mouse" && e.button == -1) return;
+		startPointers[e.pointerId] = e;//current state
+		lastPointers[e.pointerId] = e;//current state
+  });
+    
+  copyPointers = function(pointerList){
+		var p1 = [];
+		//use the most recent pointer states
+		//they should have distance and speed properties
+		for(var p in pointerList){
+			p1.push(pointerList[p]);
+		}
+		return p1;
+  }
+  /************* TODO: tap, double tap, long press ***************************/
+  
+  //arg: pointerEvent Array
+  var createGestureEvent = function(){
+		/*
+		* tap - one pointer, little movement, short duration, end of event only
+		* hold - one pointer, little movement, long duration, end of event only
+		* pan - one pointer, slow movement
+		* swipe - one pointer, fast movement
+		* pinch - two pointers, move towards or away from each other
+		* pan2 - two pointers, move same direction
+		*/
+		var ps = copyPointers(lastPointers);
+		if(ps.length < 1 || !ps[0].totalTime) return;
+		var params = {
+			name: null,
+			pointers: ps
+		};
+		if(ps.length == 1){
+			var pt = ps[0];
+			var totalMove = Math.abs(pt.distX) + Math.abs(pt.distY);
+			//console.log(totalMove,pt.totalTime);
+			if(totalMove < 10 && !lastParams["name"]){
+				if(pt.ended){
+					if(pt.totalTime < 200){
+						params.name = "tap";
+					}else{
+						if(pt.totalTime < 2000){
+							params.name = "hold";
+						}
+					}
+				}//else do nothing - wait to see what happens
+			}else{
+				//pan, swipe
+				var totalSpeed = Math.abs(pt.speedX) + Math.abs(pt.speedY);
+				params.moveX = pt.distX;
+				params.moveY = pt.distY;
+				console.log(totalSpeed);
+				if(totalSpeed < 2){
+					params.name = "pan";
+				}else{
+					//if(pt.ended){
+						params.name = "swipe";
+						//reset - stop gesture after swipe
+						startPointers = {};
+						lastPointers = {};
+						lastParams = {};
+					//}
+				}
+			}
+		}else{ //multiple pointers
+			console.log(ps);
+		}
+		//only fire the gesture with the changes from the last time it was fired
+		subtractLastParams(params);
+		if(params.name){
+			targetElement.innerHTML = params.name;
+			console.log(params.name, params);
+		}
+		var gEvent = createEvent("gesture",params, true);
+		lastParams = params;
+		return gEvent;
+  }
+  
+  var subtractLastParams = function(params){
+		for(var p in params){
+			if(lastParams[p] && typeof params[p] == "number" && typeof lastParams[p] == "number"){
+				params[p] = params[p] - lastParams[p];
+			}
+		}
+  }
+  
+  var updatePointerEvent = function(e){
+		if(startPointers[e.pointerId]){
+			var first = startPointers[e.pointerId];
+			var dur = e.timeStamp - first.timeStamp;
+			var distX = e.pageX - first.pageX;
+			var distY = e.pageY - first.pageY;
+			var params = {
+				distX: distX,
+				distY: distY,
+				speedX: distX / dur,
+				speedY: distY / dur,
+				totalTime: dur
+			}
+			for(var p in params) {
+			Object.defineProperty( e, p, {
+					value: params[ p ],
+					writable: false
+				});
+			}
+			return true;
+		}else{
+			return false;
+		}
+  }
+  
+  targetElement.addEventListener('pointermove', function(e) {
+		e.preventDefault();
+  	lastPointers[e.pointerId] = e;
+		if(updatePointerEvent(e)){
+			setTimeout(function(){
+				if(busy) return;
+				busy = true;
+				var gEvent = createGestureEvent();
+				if(gEvent) targetElement.dispatchEvent(gEvent);
+				busy = false;
+			},gestureTimeout);
+		}
+  });
+  targetElement.addEventListener('pointerup', function(e) {
+		e.preventDefault();
+		handlePointerEndEvent(e);
+  });
+  targetElement.addEventListener('pointerout', function(e) {
+		e.preventDefault();
+		handlePointerEndEvent(e);
+  });
+  
+  var handlePointerEndEvent = function(e){
+		if(startPointers[e.pointerId]){
+			lastPointers[e.pointerId] = e;
+			Object.defineProperty( e, "ended", {
+				value: true,
+				writable: false
+			});
+			//fire gestures
+			if(updatePointerEvent(e)){
+				setTimeout(function(){
+					var gEvent = createGestureEvent();
+					if(gEvent) targetElement.dispatchEvent(gEvent);
+					delete lastPointers[e.pointerId];
+					delete startPointers[e.pointerId];
+					//count current pointers, reset lastParams if none
+					if(copyPointers(lastPointers).length == 0){
+					 lastParams = {};
+					 console.log("reset");
+					}
+				},gestureTimeout);
+			}
+		}else{
+			delete lastPointers[e.pointerId];//should never be necessary...
+			//count current pointers, reset lastParams if none
+			if(copyPointers(lastPointers).length == 0){
+			 lastParams = {};
+			 console.log("reset");
+			}
+		}
+  }
+}
+</script>
+</body>
+</html>
