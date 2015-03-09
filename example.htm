@@ -74,7 +74,7 @@ window.onload = function(){
 		}
 		var ptrs = e.pointers;
 		var tbl = document.getElementById("ptrTable");
-		var fields = ["pointerId","pointerType","type","button","eventTime","totalX","totalY","direction","speed", "totalTime","ended"];
+		var fields = ["pointerId","pointerType","type","button","eventTime","distX","distY","direction","speed", "totalTime","ended"];
 		var ended = e.ended;
 		var showPtrData = function(){
 			tbl.innerHTML = "";
@@ -94,13 +94,13 @@ window.onload = function(){
 					cell.innerHTML = ptrs[i][fields[j]];
 				}	
 			}
-			if(ended){
-				var row = document.createElement("tr");
-				tbl.appendChild(row);
-				var cell = document.createElement("td");
-				row.appendChild(cell);
-				cell.innerHTML = "gesture ended";
-			}
+			var row = document.createElement("tr");
+			tbl.appendChild(row);
+			var cell = document.createElement("td");
+			row.appendChild(cell);
+			var msg = e.name;
+			if(ended) msg += " gesture ended";
+			cell.innerHTML = msg;
 		}
 		funcs.push(showPtrData);
 		requestAnimationFrame(function(){
