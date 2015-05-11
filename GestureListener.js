@@ -1,24 +1,43 @@
 ﻿
-/* PointerGestures v0.3
+/* PointerGestures v0.4
  * A Javascript gesture libaray 
  * https://github.com/aerik/PointerGestures.git
  * Copyright (c) 2015 Aerik Sylvan; Released under the MIT License 
  * 
+ * Some code taken from, and credit and attribution due to:
+ * Points - v0.1.1 - 2013-07-11
+ * Another Pointer Events polyfill
+ * http://rich-harris.github.io/Points
+ * Copyright (c) 2013 Rich Harris; Released under the MIT License 
  */
 
 var GestureListener = function (targetElement) {
     var recentPointers = {};//set on first touch of pointer, updated on gesture, reset on pointer end
     var curPointers = {};//always holds most recent pointers, but reset on pointer end
-    var lastGesture = null;
-    var lastEvent = null;
-    var lastPtrId = 0;//seed for ids for touches
+    var lastGesture = null;//any gesture, even invalid ones, reset to null under certain circumstances
+    var lastEvent = null;//only valid gesture events
     var self = this;
     var button = null;
+    var gestureStartTime = null;
+    var numEvents = 0; //in gesture
+    var rotateTotal = 0;
     this.onGesture = null;
-    this.lastTrigger = null;
 
     this.getPointers = function () {
         return copyPointers(curPointers);
+    }
+    var startGesture = function () {
+        //could do more here...
+        gestureStartTime = Date.now();
+        numEvents = 0;
+        rotateTotal = 0;
+    }
+
+    var endGesture = function () {
+        curPointers = {};
+        recentPointers = {};
+        lastGesture = null;
+        button = null;
     }
 
     var dispatchGesture = function (gesture) {
@@ -88,90 +107,118 @@ var GestureListener = function (targetElement) {
 
     var createGestureEvent = function (triggerType, isLast) {
         /*
-			* tap - one pointer, little movement, short duration, end of event only
-			* hold - one pointer, little movement, long duration, end of event only
-			* pan - one pointer, slow movement
-			* swipe - one pointer, fast movement
-			* pinch - two pointers, move towards or away from each other
-			*/
+		* tap - one pointer, little movement, short duration, end of event only
+		* hold - one pointer, little movement, long duration, end of event only
+		* pan - one pointer, slow movement
+		* swipe - one pointer, fast movement
+		* pinch - two pointers, move towards or away from each other
+		*/
+        numEvents++;
         var ps = copyPointers(curPointers);
         if (ps.length < 1) {
             console.log("no pointers " + triggerType + " " + isLast.toString());
             return null;
         }
         var pt = ps[0];
+        var gestureTime = pt.eventTime - gestureStartTime;
         if (typeof isLast == "undefined") var isLast = false;
-        var ptDistSq = Math.abs(pt.distX) + Math.abs(pt.distY);
-        var ptTotalDist = ptDistSq;
-        if (pt.totalX) ptTotalDist = pt.totalX + pt.totalY;
+        //var ptDistSq = Math.abs(pt.moveX) + Math.abs(pt.moveY);
+        //var ptTotalDist = ptDistSq;
+        var ptTotalDist = 0;
+        if (pt.totalX || pt.totalY) ptTotalDist = pt.totalX + pt.totalY;
+        var avgSpeed = ptTotalDist / pt.totalTime;
+        var lastGestureName = (lastGesture != null) ? lastGesture.name : null;
         var params = {
             target: targetElement,
             name: null,
             pointers: ps,
             ended: isLast,
             pageX: pt.pageX,
-            pageY: pt.pageY
+            pageY: pt.pageY,
+            speed: avgSpeed,
+            duration: gestureTime,
+            lastEvent: lastEvent,
+            numEvents: numEvents,
+            eventTime: pt.eventTime,
+            totalDist: ptTotalDist
         };
         //only one pointer
         if (ps.length == 1) {
-            if (ptTotalDist < 10 && (lastGesture == null)) {
-                if (pt.ended) {
-                    if (pt.totalTime < 200) {
-                        params.name = "tap";
-                    } else {
-                        if (pt.totalTime < 2000) {
-                            params.name = "hold";
+            if (ptTotalDist < 10 && (lastGestureName==null) && isLast) {
+                if (pt.totalTime < 200) {
+                    params.name = "tap";
+                    if (lastEvent) {
+                        if (lastEvent.name == "tap") { // && lastEvent.target == targetElement
+                            var tapdur = pt.eventTime - lastEvent.eventTime;
+                            if (tapdur < 500) {
+                                params.name = "doubletap";
+                            }
                         }
                     }
-                }//else do nothing - wait to see what happens
-            } else if (lastGesture == null || lastGesture == "pan") {  //pan, swipe
-                params.moveX = pt.distX;
-                params.moveY = pt.distY;
-                if (pt.speed < 1 || !isLast) {
-                    params.name = "pan";
                 } else {
-                    if (isLast) {
-                        params.name = "swipe";
-                        params.speedX = pt.speedX;
-                        params.speedY = pt.speedY;
+                    if (pt.totalTime < 3000) {
+                        params.name = "hold";
                     }
+                }
+            } else if(ptTotalDist > 4){  //pan, swipe
+                params.moveX = pt.moveX;
+                params.moveY = pt.moveY;
+                if (isLast && avgSpeed > 1.5 && gestureTime < 300) {
+                    var rec1 = recentPointers[pt.pointerId];
+                    params.name = "swipe";
+                    params.moveX = pt.distX
+                    params.moveY = pt.distY;
+                } else if (Math.abs(pt.moveX) > 0 || Math.abs(pt.moveY) > 0) {
+                    params.name = "pan";
                 }
             }
         } else if (ps.length == 2) { //two pointers
             var p2 = ps[1];//second pointer
             if (recentPointers[pt.pointerId] && recentPointers[p2.pointerId]) {
-							var rec1 = recentPointers[pt.pointerId];
-							var rec2 = recentPointers[p2.pointerId];
-							var dirDelta = p2.direction > pt.direction? p2.direction - pt.direction : pt.direction - p2.direction;
-							if(dirDelta > 180) dirDelta = Math.abs(dirDelta - 360);//closer the other direction
-							var curDist = getDist(pt, p2);
-							var lastDist = getDist(rec1, rec2);
-							var distChg = Math.round(curDist - lastDist);
-							var curCenter = { x: Math.round((pt.pageX + p2.pageX) / 2), y: Math.round((pt.pageY + p2.pageY) / 2) };
-							var oldCenter = { x: Math.round((rec1.pageX + rec2.pageX) / 2), y: Math.round((rec1.pageY + rec2.pageY) / 2) };
-							params.moveX = Math.round(curCenter.x - oldCenter.x);
-							params.moveY = Math.round(curCenter.y - oldCenter.y);
-							if (usingPointers) {;
-									//don't know why divide by 4 when should be 2
-									params.moveX = Math.floor((pt.distX + p2.distX) / 4);
-									params.moveY = Math.floor((pt.distY + p2.distY) / 4);
-							}
-							params.directionDelta = dirDelta;
-							params.pointerDistance = curDist;
-							//pan if in same direction and both points are moving
-							if (dirDelta < 120) {
-									if(pt.speed > 0.1 && p2.speed > 0.1){
-										params.name = "pan2";
-									}
-							} else {
-									if (Math.abs(distChg) != 0) {
-											params.name = "pinch";
-											params.pinchPx = distChg;
-											params.pinchCenter = curCenter;
-									}
-							}
-							console.log(params.name, distChg, pt.direction, p2.direction, dirDelta);
-					}
+                var rec1 = recentPointers[pt.pointerId];
+                var rec2 = recentPointers[p2.pointerId]
+                //var dirDelta = pt.direction > p2.direction ? pt.direction - p2.direction : p2.direction - pt.direction;
+                //if (dirDelta > 180) dirDelta = Math.abs(dirDelta - 360);//closer the other direction
+                var curDist = getDist(pt, p2);
+                var lastDist = getDist(rec1, rec2);
+                var distChg = Math.round((curDist - lastDist)*10000)/10000;
+                var curCenter = { x: Math.round((pt.pageX + p2.pageX) / 2), y: Math.round((pt.pageY + p2.pageY) / 2) };
+                var oldCenter = { x: Math.round((rec1.pageX + rec2.pageX) / 2), y: Math.round((rec1.pageY + rec2.pageY) / 2) };
+                if (pt.moveX != 0 || pt.moveY != 0 || p2.moveX != 0 || p2.moveX != 0) {
+                    params.moveX = Math.round(curCenter.x - oldCenter.x);
+                    params.moveY = Math.round(curCenter.y - oldCenter.y);
+                }
+                params.pageX = curCenter.x;
+                params.pageY = curCenter.y;
+                //params.directionDelta = dirDelta;
+                params.pointerDistance = curDist;
+                params.name = "pinch";
+                var avgTime = (pt.eventTime - rec1.eventTime + p2.eventTime - rec2.eventTime) / 2;
+                params.speed = Math.round(distChg / avgTime * 100) / 100;
+                params.pinchPx = distChg;
+                //check for rotation
+                //all this seems intuitive, but isn't right.  Need to think it through
+                var originCtr = { x: Math.round((pt.originX + p2.originX) / 2), y: Math.round((pt.originY + p2.originY) / 2) };
+                var ptAngle0 = getDir(pt.originY - originCtr.y, pt.originX - originCtr.x);
+                var ptAngle1 = getDir(rec1.pageY - originCtr.y, rec1.pageX - originCtr.x);
+                var ptAngle2 = getDir(pt.pageY - originCtr.y, pt.pageX - originCtr.x);
+                var ptClockwise = isClockwise(ptAngle0, ptAngle2);
+                var p2Angle0 = getDir(p2.originY - originCtr.y, p2.originX - originCtr.x);
+                var p2Angle1 = getDir(rec2.pageY - originCtr.y, rec2.pageX - originCtr.x);
+                var p2Angle2 = getDir(p2.pageY - originCtr.y, p2.pageX - originCtr.x);
+                var p2Clockwise = isClockwise(p2Angle0, p2Angle2);
+                //console.log("pt ", ptAngle0, ptAngle2, "p2 ", p2Angle0, p2Angle2);
+                if (ptClockwise !== null && ptClockwise === p2Clockwise) {
+                    var ptDiff = getAngleDiff(ptAngle1, ptAngle2);
+                    var p2Diff = getAngleDiff(p2Angle1, p2Angle2);
+                    var rotDeg = (ptDiff + p2Diff) / 2;
+                    if (rotDeg != 0){ //(ptAngle1,ptAngle2,p2Angle1,p2Angle2,
+                        //console.log(ptDiff,p2Diff, rotDeg, rotateTotal);
+                        rotateTotal += rotDeg;
+                        params.rotate = rotDeg;
+                    }
+                }
+            }
         }//could do 3 finger actions here
         //only fire if we have data
         //if (params.name || isLast) {
@@ -181,16 +228,43 @@ var GestureListener = function (targetElement) {
             lastGesture = null;
         }
         params.button = button;
-        lastGesture = params.name;
+        if (isLast) {
+            if (params.name == null) params.name = lastGesture.name;
+            if (lastGesture && !params.rotate && lastGesture.rotate) params.rotate = lastGesture.rotate;
+        }
+        lastGesture = params;
         var gEvent = params;
-        lastEvent = gEvent;
+        if (gEvent.name) lastEvent = gEvent;//only remember if it was a valid event
         recentPointers = {};
         if (!isLast) {
             for (var lp in curPointers) {
                 recentPointers[lp] = curPointers[lp];
             }
         }
+        //don't call endGesture here, the gEvent is still being handled
         return gEvent;
+    }
+    //gets direction in degrees, inverts Y so that 90 degrees is up
+    var getDir = function (yDiff, xDiff) {
+        var angleDeg = Math.atan2(-yDiff, xDiff) * (180 / Math.PI);
+        if (angleDeg < 0) angleDeg = angleDeg + 360;
+        return Math.round(angleDeg * 10)/10;
+    }
+    //assumes travel in shortest distance
+    var getAngleDiff = function (angle1Deg, angle2Deg) {
+        var diff = angle1Deg - angle2Deg;
+        if (diff < -180) diff += 360;
+        if (diff > 180) diff -= 360;
+        return diff;
+    }
+    //assumes travel in shortest distance
+    var isClockwise = function (angle1Deg, angle2Deg) {
+        var diff = angle1Deg - angle2Deg;
+        if (diff < -180) diff += 360;
+        var clockwise = false;
+        if (diff == 0 || diff == 180) clockwise = null;
+        if (diff > 0 && diff < 180) clockwise = true;
+        return clockwise;
     }
 
     var getDist = function (p1, p2) {
@@ -214,59 +288,64 @@ var GestureListener = function (targetElement) {
     var updatePointerEvent = function (e, last) {
         var dur = e.eventTime - last.eventTime;
         var totalTime = dur;
-        if(dur == 0) dur = 0.001;//create minimal duration in event of zero
+        if (dur == 0) dur = 0.001;//create minimal duration in event of zero
         if (last.totalTime) totalTime += last.totalTime;
-        var distX = e.pageX - last.pageX;
-        var distY = e.pageY - last.pageY;
-        //see if it didn't really move
-        if (distX == 0 && distY == 0) {
-            for (var x in last) {
-                e[x] = last[x];
-            }
-            e.totalTime = totalTime;
-            e.distX = 0;
-            e.distY = 0;
-            e.speed = Math.floor(e.speed * 90) / 100;
-            return false;
+        var moveX = e.pageX - last.pageX;
+        var moveY = e.pageY - last.pageY;
+        var totalX = Math.abs(moveX);
+        var totalY = Math.abs(moveY);
+        var distX = moveX;
+        var distY = moveY;
+        if (last.distX) {
+            distX = distX + last.distX;
+            distY = distY + last.distY;
         }
-        var totalX = Math.abs(distX);
-        var totalY = Math.abs(distY);
         var dir = null;
-				var x = distX;
-				var y = distY;
-				//average out the current and most recent vectors
-				if(typeof last.distX != "undefined"){
-					x = (x + last.distX)/2;
-					y = (y + last.distY)/2;
-				}
-				//this gives intuitive results, 90 is up, 180 is to the left	
-				dir = Math.round(Math.atan2(-y, x) * (180 / Math.PI));
-        if (dir < 0) dir = dir + 360;
-        if (last.totalX){
-					totalX += Math.abs(last.totalX);
-					totalY += Math.abs(last.totalY);
-				}	
-        var d2 = (distX * distX) + (distY * distY);
-        var speed = 0;
-        if(d2 > 0){
-					speed = Math.sqrt(d2) / dur;
+        var x = moveX;
+        var y = moveY;
+        //average out the current and most recent vectors
+        if (typeof last.moveX != "undefined") {
+            x = (x + last.moveX) / 2;
+            y = (y + last.moveY) / 2;
         }
-        //smooth out speed changes
-        if (last.speed) speed = (last.speed + 4 * speed) / 5;
-        speed = (Math.floor(speed * 100) / 100);
-        speed = speed + 0;
+        //this gives intuitive results, 90 is up, 180 is to the left	
+        dir = Math.round(Math.atan2(-y, x) * (180 / Math.PI));
+        if (dir < 0) dir = dir + 360;
+        if (last.totalX) {
+            totalX += Math.abs(last.totalX);
+            totalY += Math.abs(last.totalY);
+        }
+        var d2 = (moveX * moveX) + (moveY * moveY);
+        var speed = 0;
+        if (d2 > 0) {
+            speed = Math.sqrt(d2) / dur;
+            //smooth out speed changes
+            if (last.speed) speed = (last.speed + 4 * speed) / 5;
+            speed = (Math.floor(speed * 100) / 100);
+        } else {
+            speed = Math.floor(e.speed * 90) / 100;
+        }
+        var vectorAvg = null;
+        if (typeof (last.moveX) != "undefined") {
+            var vectorAvg = { x: (moveX + last.moveX) / 2, y: (moveY + last.moveY) / 2 };
+        }
+        if (vectorAvg && last.vectorAvg) {
+            vectorAvg.x = (vectorAvg.x + last.vectorAvg.x) / 2;
+            vectorAvg.y = (vectorAvg.y + last.vectorAvg.y) / 2;
+        }
         var params = {
-            button: button,
-            direction: dir,
-            distX: distX,
+            button: button,//mouse button that is down
+            direction: dir,//direction pointer is moving
+            distX: distX,//distance from starting point
             distY: distY,
-            speed: speed,
-            speedX: distX / dur,
-            speedY: distY / dur,
-            totalX: totalX,
+            moveX: moveX,//how far it just moved
+            moveY: moveY,
+            speed: speed,//approximate speed in pixels / ms
+            totalX: totalX,//how many pixels pointer has moved on X axis total
             totalY: totalY,
-            elapsedTime: dur,
-            totalTime: totalTime
+            elapsedTime: dur,//ms since the last pointer movement
+            totalTime: totalTime,//ms since pointer started activity
+            vectorAvg: vectorAvg //average direction of the pointers vector
         }
         for (var p in params) {
             e[p] = params[p];
@@ -275,6 +354,9 @@ var GestureListener = function (targetElement) {
             //    writable: false
             //});
         }
+        if (!e.originX && last.originX) e.originX = last.originX;
+        if (!e.originY && last.originY) e.originY = last.originY;
+        if (d2 == 0) return false;//didn't move
         return true;
     }
     var usingPointers = false;
@@ -301,17 +383,18 @@ var GestureListener = function (targetElement) {
             } else {
                 button = null;
             }
-            e.eventTime = Date.now();
-            //if (e.pointerType == "mouse" && e.button == -1) return;
-            e.eventTime = Date.now();
+            e.originX = e.pageX;
+            e.originY = e.pageY;
+            e.eventTime = evt.timeStamp;
             recentPointers[e.pointerId] = e;//current state
             curPointers[e.pointerId] = e;//current state
+            startGesture();
         });
         targetElement.addEventListener(usingPointers.move, function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
             if (e.pointerType == "mouse" && button == null) return;
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             curPointers[e.pointerId] = e;
             var last = recentPointers[e.pointerId];
             if (last) {
@@ -323,7 +406,7 @@ var GestureListener = function (targetElement) {
         var ptrEnd = function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             var isLast = false;
             curPointers[e.pointerId] = e;
             var curAry = copyPointers(curPointers);
@@ -339,8 +422,8 @@ var GestureListener = function (targetElement) {
             recentPointers[e.pointerId] = null;
             delete curPointers[e.pointerId];
             delete recentPointers[e.pointerId];
-            //lastGesture = null;
-            if (isLast || e.pointerType == "mouse") button = null;
+            if (e.pointerType == "mouse") button = null;
+            if (isLast) endGesture();
         }
         targetElement.addEventListener(usingPointers.up, ptrEnd);
         targetElement.addEventListener(usingPointers.out, function (evt) {
@@ -355,29 +438,35 @@ var GestureListener = function (targetElement) {
             e.pointerId = 0;
             if (!e.pointerType) e.pointerType = "mouse";
             if (e.pointerType == "mouse" && e.button == -1) return;
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
+            e.originX = e.pageX;
+            e.originY = e.pageY;
             recentPointers[0] = e;//current state
             curPointers[0] = e;//current state
+            startGesture();
         });
         targetElement.addEventListener('touchstart', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
             button = null;
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             for (var i = 0; i < e.targetTouches.length; i++) {
                 var t = copyEvent(e.targetTouches[i]);
                 if (!t.identifier) t.identifier = 0;
                 t.eventTime = e.eventTime;
                 t.pointerId = t.identifier;
                 t.pointerType = "touch";
+                t.originX = t.pageX;
+                t.originY = t.pageY;
                 recentPointers[t.identifier] = t;//current state
                 curPointers[t.identifier] = t;//current state
             }
+            startGesture();
         });
         targetElement.addEventListener('mousemove', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             e.pointerId = 0;
             if (!e.pointerType) e.pointerType = "mouse";
             curPointers[0] = e;
@@ -393,7 +482,7 @@ var GestureListener = function (targetElement) {
         targetElement.addEventListener('touchmove', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             for (var i = 0; i < e.targetTouches.length; i++) {
                 var t = copyEvent(e.targetTouches[i]);
                 if (!t.identifier) t.identifier = 0;
@@ -405,14 +494,14 @@ var GestureListener = function (targetElement) {
                 if (last) {
                     updatePointerEvent(t, last);
                     var gEvent = createGestureEvent('touchmove');
-										if (gEvent) dispatchGesture(gEvent);
+                    if (gEvent) dispatchGesture(gEvent);
                 }
             }
         });
         targetElement.addEventListener('mouseup', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             e.pointerId = 0;
             if (!e.pointerType) e.pointerType = "mouse";
             if (recentPointers[0]) {
@@ -427,15 +516,12 @@ var GestureListener = function (targetElement) {
                 }
             }
             //there is only one mouse pointer, so reset everything
-            curPointers = {};
-            recentPointers = {};
-            lastGesture = null;
-            button = null;
+            endGesture();
         });
         targetElement.addEventListener('touchend', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
-            e.eventTime = Date.now();
+            e.eventTime = evt.timeStamp;
             if (!e.pointerType) e.pointerType = "touch";
             for (var i = 0; i < e.changedTouches.length; i++) {
                 var t = copyEvent(e.changedTouches[i]);
@@ -465,9 +551,7 @@ var GestureListener = function (targetElement) {
                 }
             }
             if (isLast) {
-                curPointers = {};
-                recentPointers = {};
-                lastGesture = null;
+                endGesture();
             }
         });
     }
