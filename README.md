@@ -1,3 +1,2 @@
 # PointerGestures
-A Javascript gesture libaray
-Loosely based on a pointers abstraction layer
+A Javascript gesture library loosely based on a pointers abstraction layer
