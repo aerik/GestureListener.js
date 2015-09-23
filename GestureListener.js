@@ -1,7 +1,7 @@
 ﻿
 /* PointerGestures v0.4
  * A Javascript gesture libaray 
- * https://github.com/aerik/PointerGestures.git
+ * https://github.com/aerik/GestureListener.js
  * Copyright (c) 2015 Aerik Sylvan; Released under the MIT License 
  * 
  * Some code taken from, and credit and attribution due to:
