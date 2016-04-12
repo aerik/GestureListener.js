@@ -1,19 +1,19 @@
 ﻿
-/* GestureListener v0.5
- * A Javascript gesture libaray 
+/* GestureListener v0.6
+ * A Javascript gesture libaray
  * https://github.com/aerik/GestureListener.git
- * Copyright (c) 2015 Aerik Sylvan; Released under the MIT License 
- * 
+ * Copyright (c) 2015 Aerik Sylvan; Released under the MIT License
+ *
  * Some code taken from, and credit and attribution due to:
  * Points - v0.1.1 - 2013-07-11
  * Another Pointer Events polyfill
  * http://rich-harris.github.io/Points
- * Copyright (c) 2013 Rich Harris; Released under the MIT License 
+ * Copyright (c) 2013 Rich Harris; Released under the MIT License
  */
 
 /************************** GestureListener ***********************************/
 /**
-* Model for GestureListener  
+* Model for GestureListener
 *
 * @constructor
 */
@@ -44,6 +44,7 @@ var GestureListener = function (targetElement) {
         recentPointers = {};
         lastGesture = null;
         button = null;
+        //console.log("Gesture Ended");
     }
 
     var dispatchGesture = function (gesture) {
@@ -100,8 +101,7 @@ var GestureListener = function (targetElement) {
         return uiEvent;
     };
 
-
-
+    //returns an Array instead of an Object
     copyPointers = function (pointerList) {
         var p1 = [];
         //use the most recent pointer states
@@ -150,10 +150,14 @@ var GestureListener = function (targetElement) {
             totalDist: ptTotalDist,
             handled: false
         };
+        if(triggerType == "pointerdown"){
+          params.name = "pointerdown";
+        }
         //only one pointer
         if (ps.length == 1) {
-            if (ptTotalDist < 10 && (lastGestureName==null) && isLast) {
-                if (pt.totalTime < 500) {
+            if (ptTotalDist < 20 && (lastGestureName==null) && isLast) {
+                //maximum time for "tap", more than this is "hold"
+                if (pt.totalTime < 400) {
                     //better to use setTimeout so we don't fire
                     //tap and also doubletap?
                     params.name = "tap";
@@ -166,7 +170,8 @@ var GestureListener = function (targetElement) {
                         }
                     }
                 } else {
-                    if (pt.totalTime < 3000) {
+                    //upper time limit - necessary?
+                    if (pt.totalTime < 5000) {
                         params.name = "hold";
                     }
                 }
@@ -241,9 +246,13 @@ var GestureListener = function (targetElement) {
             if (params.name == null && lastGesture) params.name = lastGesture.name;
             if (lastGesture && !params.rotate && lastGesture.rotate) params.rotate = lastGesture.rotate;
         }
-        lastGesture = params;
+        if(params.name != "pointerdown"){ //"pointerdown" is not a gesture
+					lastGesture = params;
+        }
         var gEvent = params;
-        if (gEvent.name) lastEvent = gEvent;//only remember if it was a valid event
+        if (gEvent.name && gEvent.name != "pointerdown"){
+					lastEvent = gEvent;//only remember if it was a valid event
+				}
         recentPointers = {};
         if (!isLast) {
             for (var lp in curPointers) {
@@ -251,6 +260,7 @@ var GestureListener = function (targetElement) {
             }
         }
         //don't call endGesture here, the gEvent is still being handled
+        //console.log(params.name);
         return gEvent;
     }
     //gets direction in degrees, inverts Y so that 90 degrees is up
@@ -317,7 +327,7 @@ var GestureListener = function (targetElement) {
             x = (x + last.moveX) / 2;
             y = (y + last.moveY) / 2;
         }
-        //this gives intuitive results, 90 is up, 180 is to the left	
+        //this gives intuitive results, 90 is up, 180 is to the left
         dir = Math.round(Math.atan2(-y, x) * (180 / Math.PI));
         if (dir < 0) dir = dir + 360;
         if (last.totalX) {
@@ -402,6 +412,8 @@ var GestureListener = function (targetElement) {
             recentPointers[e.pointerId] = e;//current state
             curPointers[e.pointerId] = e;//current state
             startGesture();
+            var gEvent = createGestureEvent("pointerdown",false);
+            if (gEvent) dispatchGesture(gEvent);
         });
         targetElement.addEventListener(usingPointers.move, function (evt) {
             evt.preventDefault();
@@ -457,14 +469,18 @@ var GestureListener = function (targetElement) {
             recentPointers[0] = e;//current state
             curPointers[0] = e;//current state
             startGesture();
+            var gEvent = createGestureEvent("pointerdown",false);
+            if (gEvent) dispatchGesture(gEvent);
         });
         targetElement.addEventListener('touchstart', function (evt) {
             evt.preventDefault();
             var e = copyEvent(evt);
             button = null;
             e.eventTime = evt.timeStamp;
-            for (var i = 0; i < e.targetTouches.length; i++) {
-                var t = copyEvent(e.targetTouches[i]);
+            var ct = evt.changedTouches;
+            //use changedTouches here - those are the ones that started
+            for (var i = 0; i < e.changedTouches.length; i++) {
+                var t = copyEvent(e.changedTouches[i]);
                 if (!t.identifier) t.identifier = 0;
                 t.eventTime = e.eventTime;
                 t.pointerId = t.identifier;
@@ -473,6 +489,8 @@ var GestureListener = function (targetElement) {
                 t.originY = t.pageY;
                 recentPointers[t.identifier] = t;//current state
                 curPointers[t.identifier] = t;//current state
+                var gEvent = createGestureEvent("pointerdown",false);
+                if (gEvent) dispatchGesture(gEvent);
             }
             startGesture();
         });
@@ -482,9 +500,9 @@ var GestureListener = function (targetElement) {
             e.eventTime = evt.timeStamp;
             e.pointerId = 0;
             if (!e.pointerType) e.pointerType = "mouse";
-            curPointers[0] = e;
             var last = recentPointers[0];
             if (last) {
+                curPointers[0] = e;
                 updatePointerEvent(e, last);
                 //setTimeout(function(){
                 var gEvent = createGestureEvent('mousemove',false);
@@ -528,7 +546,6 @@ var GestureListener = function (targetElement) {
                     if (gEvent) dispatchGesture(gEvent);
                 }
             }
-            //there is only one mouse pointer, so reset everything
             endGesture();
         });
         targetElement.addEventListener('touchend', function (evt) {
